@@ -308,9 +308,17 @@ async function webcamLoop(estimator) {
     const vw = webcamVideo.videoWidth;
     const vh = webcamVideo.videoHeight;
     const s = Math.min(1, MAX_CAPTURE / Math.max(vw, vh));
-    canvas.width = Math.max(1, Math.round(vw * s));
-    canvas.height = Math.max(1, Math.round(vh * s));
-    canvas.getContext('2d').drawImage(webcamVideo, 0, 0, canvas.width, canvas.height);
+    const cw = Math.max(1, Math.round(vw * s));
+    const ch = Math.max(1, Math.round(vh * s));
+    // Assigning width/height clears a canvas even when the value is unchanged
+    // — only resize on a real dimension change (e.g. the camera rotates).
+    if (canvas.width !== cw) canvas.width = cw;
+    if (canvas.height !== ch) canvas.height = ch;
+    // willReadFrequently: the estimator reads this canvas back with
+    // getImageData every pass (RawImage.fromCanvas). The FIRST getContext call
+    // fixes the attribute, so setting it here covers the library's reads too.
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(webcamVideo, 0, 0, cw, ch);
     const { depth } = await estimator(canvas);
     if (!webcamActive) break; // stopped mid-pass: the result is stale — drop it
     pendingFrame = { depth, image: canvas }; // overwrite = drop, never queue
