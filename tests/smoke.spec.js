@@ -25,3 +25,15 @@ test('app boots: canvas mounts, WebGL alive, no page errors', async ({ page }) =
 
   expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([]);
 });
+
+test('milestone 1: renders a 128x128 (16,384-point) cloud', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e}`));
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`);
+  });
+  await page.goto('/');
+  await page.waitForFunction(() => window.__app?.getPointCount() === 128 * 128);
+  expect(await page.evaluate(() => window.__app.getPointCount())).toBe(16384);
+  expect(errors).toEqual([]);
+});
