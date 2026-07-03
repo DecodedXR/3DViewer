@@ -31,11 +31,31 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
 // ===========================================================================
-// MILESTONE 1 GOES HERE:
-//   Build a 128x128 grid of points (16,384 total) on the XY plane with a
-//   random Z per point, wrap it in a THREE.Points, and add it to `scene`.
-//   Nothing else in this file needs to change.
+// MILESTONE 1: a fake 128x128 point cloud (16,384 points) to prove the render
+// pipeline and camera controls with real geometry. Grid on the XY plane,
+// centered at the origin (-1..1 in X and Y) so it sits in front of the camera
+// at z = 3; each point gets a random Z (-0.5..0.5) so the cloud has depth to
+// orbit around. Default PointsMaterial for now — the splat shader is M2.
 // ===========================================================================
+const GRID = 128; // 128 x 128 = 16,384 points
+const positions = new Float32Array(GRID * GRID * 3);
+for (let iy = 0; iy < GRID; iy++) {
+  for (let ix = 0; ix < GRID; ix++) {
+    const i = (iy * GRID + ix) * 3;
+    positions[i] = (ix / (GRID - 1)) * 2 - 1; // x: -1..1
+    positions[i + 1] = (iy / (GRID - 1)) * 2 - 1; // y: -1..1
+    positions[i + 2] = Math.random() - 0.5; // z: -0.5..0.5
+  }
+}
+
+const cloudGeometry = new THREE.BufferGeometry();
+cloudGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+const cloud = new THREE.Points(
+  cloudGeometry,
+  new THREE.PointsMaterial({ size: 0.03 }),
+);
+scene.add(cloud);
 
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
