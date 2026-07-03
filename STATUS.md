@@ -96,7 +96,11 @@ _Last updated: 2026-07-03 — Milestone 4 (live webcam input) landed. Milestone 
   ramp is consumed with the M3 sign contract, the loop continues unprompted,
   stop releases the camera track and drops a stale post-stop result; M4-B —
   permission denial surfaces in `#status` and the UI recovers; M4-C — the
-  starvation regression above. Real-model probe (fake camera, WASM):
+  starvation regression above; M4-D — sessions carry a **generation token**
+  (`webcamGen`): a stop→start with a pass still in flight must not let the
+  dead session's result apply, its loop resurrect, or its rejection tear down
+  the live session (verifier finding — a bare boolean re-validated stale
+  passes). Real-model probe (fake camera, WASM):
   continuous live passes verified end-to-end, canvas input 512×384 →
   input-sized depth back. Debug hook grew `__setEstimator`, `__getEstimator`,
   `webcamRunning()`, `__webcamVideo`. Proven non-tautological (RED with
