@@ -395,6 +395,95 @@ test('milestone 4: an instantly-resolving estimator must not starve the render l
   expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
+// Milestone 4 session identity: restarting the webcam while the PREVIOUS
+// session's pass is still in flight must not let that dead session leak into
+// the live one. A bare boolean can't tell sessions apart — stop→start flips
+// it back to true and retroactively "re-validates" the stale pass, so its
+// result gets applied, its loop resurrects (two passes in flight), and its
+// rejection tears down the NEW session. Each needs a per-session generation.
+test('milestone 4: restart while a pass is in flight must not resurrect the dead session', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e}`));
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`);
+  });
+  await page.goto('/');
+  await page.waitForFunction(() => window.__app?.getPointCount() === 128 * 128);
+
+  // Fake estimator whose every pass is settled manually by the test.
+  await page.evaluate(() => {
+    const s = (window.__t = { calls: 0, passes: [] });
+    window.__app.__setEstimator(
+      () =>
+        new Promise((res, rej) => {
+          s.calls++;
+          s.passes.push({ res, rej });
+        }),
+    );
+  });
+
+  // Session 1: one pass in flight. Stop it, start session 2.
+  await page.click('#webcam-toggle');
+  await page.waitForFunction(() => window.__t.calls === 1);
+  await page.click('#webcam-toggle'); // stop
+  await page.waitForFunction(() => window.__app.webcamRunning() === false);
+  await page.click('#webcam-toggle'); // start session 2
+  await page.waitForFunction(() => window.__t.calls === 2);
+
+  // The DEAD session-1 pass resolves with an all-dark plane. It must be
+  // dropped: the cloud stays untouched, and session 1's loop must NOT
+  // resurrect and capture a third frame.
+  await page.evaluate(() => {
+    const W = 8;
+    const H = 8;
+    window.__t.passes[0].res({
+      depth: { data: new Uint8Array(W * H).fill(0), width: W, height: H },
+    });
+  });
+  await page.waitForTimeout(500);
+  const afterStale = await page.evaluate(() => {
+    let cloud = null;
+    window.__app.scene.traverse((o) => {
+      if (o.isPoints) cloud = o;
+    });
+    const pos = cloud.geometry.attributes.position;
+    let allDark = true;
+    for (let i = 0; i < pos.count; i += 997) {
+      if (pos.getZ(i) > -0.4) allDark = false;
+    }
+    return { calls: window.__t.calls, allDark, running: window.__app.webcamRunning() };
+  });
+  expect(afterStale.allDark, 'a dead session’s result must not be applied').toBe(false);
+  expect(afterStale.calls, 'a dead session’s loop must not capture again').toBe(2);
+  expect(afterStale.running).toBe(true);
+
+  // Same race, rejection flavor: stop session 2, start session 3, then the
+  // DEAD session-2 pass rejects. The ghost failure must not tear down the
+  // live session or overwrite its status.
+  await page.click('#webcam-toggle'); // stop session 2
+  await page.waitForFunction(() => window.__app.webcamRunning() === false);
+  await page.click('#webcam-toggle'); // start session 3
+  await page.waitForFunction(() => window.__t.calls === 3);
+  await page.evaluate(() => {
+    window.__t.track = window.__app.__webcamVideo.srcObject.getVideoTracks()[0];
+    window.__t.passes[1].rej(new Error('ghost failure from dead session'));
+  });
+  await page.waitForTimeout(500);
+  expect(
+    await page.evaluate(() => window.__app.webcamRunning()),
+    'a dead session’s rejection must not stop the live session',
+  ).toBe(true);
+  expect(await page.evaluate(() => window.__t.track.readyState)).toBe('live');
+  await expect(page.locator('#status')).not.toContainText(/failed/i);
+
+  await page.click('#webcam-toggle'); // final stop
+  await page.waitForFunction(() => window.__app.webcamRunning() === false);
+  expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
 // Milestone 4 failure path: camera permission denied (or no camera) must
 // surface a visible error state in #status and leave the UI recoverable — not
 // an uncaught rejection, not a console.error, not a stuck-disabled button.

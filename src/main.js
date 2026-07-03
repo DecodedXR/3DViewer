@@ -295,6 +295,14 @@ let webcamActive = false;
 let webcamStream = null;
 let pendingFrame = null; // newest completed { depth, image } — null once consumed
 
+// Session identity. A bare boolean can't distinguish sessions: stop→start
+// flips it back to true and retroactively "re-validates" a pass still in
+// flight from the DEAD session — its result would apply, its loop resurrect
+// (two passes in flight), and its rejection would tear down the live session.
+// Every start and stop bumps the generation; a loop only acts while the
+// generation it captured is still current.
+let webcamGen = 0;
+
 const webcamVideo = document.createElement('video');
 webcamVideo.muted = true;
 webcamVideo.playsInline = true;
@@ -302,8 +310,8 @@ webcamVideo.playsInline = true;
 const captureCanvases = [document.createElement('canvas'), document.createElement('canvas')];
 let captureIndex = 0;
 
-async function webcamLoop(estimator) {
-  while (webcamActive) {
+async function webcamLoop(estimator, gen) {
+  while (gen === webcamGen) {
     const canvas = captureCanvases[(captureIndex ^= 1)];
     const vw = webcamVideo.videoWidth;
     const vh = webcamVideo.videoHeight;
@@ -320,7 +328,7 @@ async function webcamLoop(estimator) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(webcamVideo, 0, 0, cw, ch);
     const { depth } = await estimator(canvas);
-    if (!webcamActive) break; // stopped mid-pass: the result is stale — drop it
+    if (gen !== webcamGen) break; // session ended mid-pass: stale — drop it
     pendingFrame = { depth, image: canvas }; // overwrite = drop, never queue
     // Yield ONE rendered frame before the next pass. The estimator's promise
     // chain can settle entirely in microtasks (the WASM path does), and
@@ -333,6 +341,7 @@ async function webcamLoop(estimator) {
 }
 
 function stopWebcam(message) {
+  webcamGen++; // invalidate any in-flight pass from this session
   webcamActive = false;
   pendingFrame = null;
   if (webcamStream) {
@@ -355,6 +364,7 @@ async function startWebcam() {
   }
   webcamBtn.disabled = true; // no double-start while permissions/model resolve
   photoInput.disabled = true;
+  const gen = ++webcamGen; // this session's identity
   try {
     statusEl.textContent = 'Starting webcam…';
     webcamStream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -371,7 +381,10 @@ async function startWebcam() {
     webcamBtn.textContent = 'Stop webcam';
     webcamBtn.disabled = false;
     statusEl.textContent = 'Webcam live — newest depth wins; slow frames drop.';
-    webcamLoop(estimator).catch((err) => {
+    webcamLoop(estimator, gen).catch((err) => {
+      // A rejection from a pass that outlived its session is a ghost — the
+      // user already stopped (or restarted) — never tear down the live one.
+      if (gen !== webcamGen) return;
       console.warn('[webcam] depth loop failed:', err);
       stopWebcam(`Webcam depth failed: ${err && err.message ? err.message : err}`);
     });
