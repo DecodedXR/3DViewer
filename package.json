@@ -1,0 +1,21 @@
+{
+  "name": "live-depth-field",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Browser tool that turns a webcam feed or photo into an explorable 3D point cloud styled like Gaussian splats. Fully client-side.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173 --strictPort",
+    "test": "vite build && playwright test",
+    "test:smoke": "vite build && playwright test"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "vite": "^8.1.3"
+  }
+}

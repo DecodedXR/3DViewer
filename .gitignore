@@ -1,0 +1,12 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+.DS_Store
+*.log
+
+# Local Claude Code overrides
+.claude/settings.local.json
+
+# Stray empty nested folder left locked by OneDrive during the repo flatten
+/3DViewer/
