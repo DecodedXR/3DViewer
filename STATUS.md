@@ -4,7 +4,8 @@ Single source of truth for "what's next." One milestone per PR/run. Autopilot:
 pick the one task under **NEXT**, ship it, stop. Do **not** start anything under
 **BLOCKED**.
 
-_Last updated: 2026-07-03 — Milestone 2 landed (splat-style shader + sliders)._
+_Last updated: 2026-07-03 — M3 human checkpoint **CLEARED** (transformers.js
+depth output format confirmed). Milestone 3 is now the actionable NEXT._
 
 ---
 
@@ -42,28 +43,71 @@ _Last updated: 2026-07-03 — Milestone 2 landed (splat-style shader + sliders).
 
 ## NEXT (the one actionable task)
 
-**None actionable by autopilot.** Milestone 2 has landed. The next milestone is
-**Milestone 3**, which carries a mandatory **human checkpoint** (confirm the
-transformers.js depth output format — tensor shape + value range — before wiring
-Z mapping) and is therefore **off-limits to autopilot**. A human must clear that
-checkpoint before M3 can be picked up. See BLOCKED below.
+### Milestone 3 — Photo input → depth → cloud
+
+**Human checkpoint: CLEARED — 2026-07-03.** The transformers.js Depth Anything V2
+Small output format was confirmed against authoritative sources (the
+`onnx-community/depth-anything-v2-small` model card, the transformers.js
+`DepthEstimationPipeline` source, and the HF Depth Anything V2 docs). M3 is no
+longer off-limits. Do **not** re-derive the contract below — it is the confirmed
+checkpoint content.
+
+**Goal:** File upload for one image; load Depth Anything V2 Small via
+transformers.js (**WebGPU with WASM fallback**); run one depth pass; map depth →
+Z displacement of a point grid; sample image pixels for per-point color; show a
+clear async loading state. Reuse the M2 cloud + splat shader.
+
+**Confirmed output contract:**
+
+- Call: `pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small')`;
+  then `const { predicted_depth, depth } = await estimator(imageBlobOrUrl)`.
+- `depth`: a `RawImage` — `Uint8`, **1 channel** (grayscale), size = **input
+  image W×H**, values **0–255** (min–max normalized: `(x−min)/(max−min)×255`).
+- `predicted_depth`: `float32` `Tensor`, interpolated to input **W×H**, **raw,
+  unbounded, RELATIVE** depth (not metric, not 0–1).
+- Model is **relative** depth (`depth_estimation_type="relative"`). Convention:
+  **higher value = closer** → in `depth`, **brighter = nearer**.
+
+**Mapping decisions (agreed 2026-07-03):**
+
+1. **Depth source:** use the `depth` RawImage (`depth.data`, `Uint8`, 0–255) as
+   the per-point depth — simplest; avoids raw-tensor shape/normalization edge
+   cases. `predicted_depth` stays available if unnormalized values are needed.
+2. **Z direction:** map higher/brighter → nearer the camera
+   (e.g. `z = (d/255 − 0.5) × scale`). **Mandatory acceptance criterion — verify
+   the sign empirically** on the pinned transformers.js version (inspect one
+   `depth` output: near objects must be bright; if inverted, flip the sign). This
+   is a runtime check, not a guess.
+3. **Point budget:** **downsample** the depth map to a fixed grid (near the
+   current ~16k-point scale; exact size chosen in M3 to hold the 30fps orbit
+   constraint) rather than one point per pixel.
+
+**Definition of done:** upload an image → a depth-displaced, image-colored point
+cloud renders through the M2 splat shader; async model-load state is visible;
+`npm run build` succeeds; no console/page errors; 30fps orbit preserved. Author a
+RED test first (e.g. the cloud's geometry/point layout updates to image-derived
+values after a depth pass) proven non-tautological by reverting.
+
+**Dependency note:** M3 is the one milestone that **adds a runtime dependency**
+(`@huggingface/transformers` for the depth model — the bootstrap deliberately did
+not provision it). Editing dependencies is on autopilot's forbidden-ops list, so
+this addition is a **second gate**: a human should add/approve the dependency (or
+run M3 in a normal session), after which autopilot may implement the rest. This
+is the intended exception to the "don't edit dependencies" CI note below.
+
+**Autopilot note:** checkpoint is cleared, but M3 is the highest-uncertainty
+milestone (model API, WebGPU/WASM, async decoupling). Keep the verify + review
+gate tight; the Z-direction sign check (#2) is mandatory.
+
+**Test command:** `npm test` (builds, then runs Playwright).
 
 ---
 
 ## BLOCKED — do NOT start until the prior milestone has merged
 
 These are here for context only. Each depends on the one before it and must not be
-picked up in the same run. **M3 onward also carries a human checkpoint and is
-off-limits to autopilot** until a human clears it.
-
-- **Milestone 3 — Photo input → depth → cloud.** File upload for one image; load
-  Depth Anything V2 Small via transformers.js; run one depth pass; map depth →
-  Z displacement of a point grid sized to the image; sample image pixels for
-  per-point color; clear async loading state.
-  ⚠️ **HUMAN CHECKPOINT / OFF-LIMITS TO AUTOPILOT:** must first STOP and confirm
-  transformers.js output format (tensor shape + value range) with a human before
-  wiring Z mapping — do **not** guess. M2 dependency now satisfied; remains gated
-  on the human checkpoint.
+picked up in the same run. (Milestone 3's human checkpoint has been **cleared** —
+it now lives under NEXT above.)
 
 - **Milestone 4 — Live webcam input.** `getUserMedia` → offscreen canvas; depth
   inference loop **decoupled** from render (post latest depth map; render consumes
@@ -87,4 +131,6 @@ off-limits to autopilot** until a human clears it.
   Do not weaken/delete the smoke test to force green; if CI is red for a real
   reason, bail and report per the autopilot rules.
 - Do not edit dependencies or CI config as part of a milestone task — the
-  bootstrap already provisioned `three`, Vite, Playwright, and CI.
+  bootstrap already provisioned `three`, Vite, Playwright, and CI. **Exception:
+  Milestone 3** must add `@huggingface/transformers` (the depth model); that is
+  the one intended runtime-dependency addition. Do not touch CI config even then.
