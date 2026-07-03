@@ -4,9 +4,10 @@ Single source of truth for "what's next." One milestone per PR/run. Autopilot:
 pick the one task under **NEXT**, ship it, stop. Do **not** start anything under
 **BLOCKED**.
 
-_Last updated: 2026-07-03 — M3 fully unblocked: human checkpoint **CLEARED**
-(depth output format confirmed) **and** `@huggingface/transformers@4.2.0` added.
-Milestone 3 is the actionable NEXT._
+_Last updated: 2026-07-03 — Milestone 3 (photo → depth → cloud) landed.
+Milestone 4 (live webcam input) is the actionable NEXT. Note for autopilot: M4
+is a render/inference-**decoupling** milestone — the effort↔pick gate applies
+(known-high session effort or defer)._
 
 ---
 
@@ -40,67 +41,58 @@ Milestone 3 is the actionable NEXT._
   would surface as `console.error`). Proven non-tautological (RED on the M1
   `PointsMaterial` state). Pre-change HEAD (rollback) `7345f44`.
 
+- **Milestone 3 — Photo input → depth → cloud.** File upload (`#photo-input` +
+  `#status` line in the `#controls` panel) → Depth Anything V2 Small via
+  transformers.js → depth-displaced, image-colored cloud through the M2 splat
+  shader. `src/depth.js` lazy-loads the pipeline (dynamic import keeps the boot
+  bundle unchanged; no model bytes until first upload) and picks the device
+  **once up front** by probing `navigator.gpu.requestAdapter()` — WebGPU if an
+  adapter exists, else WASM. (Sequential try-webgpu-then-wasm does NOT work on
+  transformers.js 4.2.0: a rejected WebGPU init poisons the library's shared
+  `webInitChain`, so any later session-create rethrows the same error.)
+  `applyDepthToCloud` (exposed as `window.__app.applyDepth` for tests) samples
+  the `depth` RawImage nearest-neighbor onto the fixed 128×128 grid —
+  `z = (d/255 − 0.5)`, **bright = near = toward the camera** — colors each
+  point from the photo (new `aColor` attribute; pre-upload tint = M2 look),
+  flips depth+color Y identically, and preserves photo aspect via object
+  scale. Input disabled while a pass runs (never queue); bad-file and
+  model-load failures surface in `#status` (console.warn, not error). Z sign
+  **verified empirically against the real model** (COCO cats photo: cats
+  landed nearer than the couch backrest) per the mandatory acceptance
+  criterion; WASM-fallback path exercised in the same run. Smoke tests: M3-A
+  synthetic depth ramp → sign/color/point-budget asserts; M3-B non-image file
+  → visible error state, no console errors. Proven non-tautological (RED with
+  production files reverted, tests kept). Pre-change HEAD (rollback) `5e01170`.
+
 ---
 
 ## NEXT (the one actionable task)
 
-### Milestone 3 — Photo input → depth → cloud
+### Milestone 4 — Live webcam input
 
-**Human checkpoint: CLEARED — 2026-07-03.** The transformers.js Depth Anything V2
-Small output format was confirmed against authoritative sources (the
-`onnx-community/depth-anything-v2-small` model card, the transformers.js
-`DepthEstimationPipeline` source, and the HF Depth Anything V2 docs). M3 is no
-longer off-limits. Do **not** re-derive the contract below — it is the confirmed
-checkpoint content.
+**Goal:** `getUserMedia` → offscreen canvas; a continuous depth-inference loop
+**decoupled** from render (post the latest depth map; render consumes newest;
+**drop frames, never queue** — the render loop never blocks on inference); reuse
+the M2/M3 cloud, splat shader, and `applyDepthToCloud` mapping.
 
-**Goal:** File upload for one image; load Depth Anything V2 Small via
-transformers.js (**WebGPU with WASM fallback**); run one depth pass; map depth →
-Z displacement of a point grid; sample image pixels for per-point color; show a
-clear async loading state. Reuse the M2 cloud + splat shader.
+**Carry-over facts from M3 (do not re-derive):**
 
-**Confirmed output contract:**
+- The confirmed depth output contract lives in the M3 DONE entry above and in
+  `src/depth.js`'s header comment: `depth` RawImage, Uint8, 1 channel, input
+  W×H, 0–255 min–max normalized, **brighter = nearer** (sign verified
+  empirically 2026-07-03).
+- transformers.js 4.2.0 quirk: a rejected WebGPU session init **poisons the
+  library's shared `webInitChain`** — in-page retry on another device is
+  impossible. `src/depth.js` therefore probes `requestAdapter()` and picks the
+  device once; keep that pattern.
+- The estimator accepts a URL/Blob; for webcam frames an offscreen-canvas blob
+  or RawImage input path will need confirming against the pipeline source
+  before use (**do not guess** — CLAUDE.md rule).
 
-- Call: `pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small')`;
-  then `const { predicted_depth, depth } = await estimator(imageBlobOrUrl)`.
-- `depth`: a `RawImage` — `Uint8`, **1 channel** (grayscale), size = **input
-  image W×H**, values **0–255** (min–max normalized: `(x−min)/(max−min)×255`).
-- `predicted_depth`: `float32` `Tensor`, interpolated to input **W×H**, **raw,
-  unbounded, RELATIVE** depth (not metric, not 0–1).
-- Model is **relative** depth (`depth_estimation_type="relative"`). Convention:
-  **higher value = closer** → in `depth`, **brighter = nearer**.
-
-**Mapping decisions (agreed 2026-07-03):**
-
-1. **Depth source:** use the `depth` RawImage (`depth.data`, `Uint8`, 0–255) as
-   the per-point depth — simplest; avoids raw-tensor shape/normalization edge
-   cases. `predicted_depth` stays available if unnormalized values are needed.
-2. **Z direction:** map higher/brighter → nearer the camera
-   (e.g. `z = (d/255 − 0.5) × scale`). **Mandatory acceptance criterion — verify
-   the sign empirically** on the pinned transformers.js version (inspect one
-   `depth` output: near objects must be bright; if inverted, flip the sign). This
-   is a runtime check, not a guess.
-3. **Point budget:** **downsample** the depth map to a fixed grid (near the
-   current ~16k-point scale; exact size chosen in M3 to hold the 30fps orbit
-   constraint) rather than one point per pixel.
-
-**Definition of done:** upload an image → a depth-displaced, image-colored point
-cloud renders through the M2 splat shader; async model-load state is visible;
-`npm run build` succeeds; no console/page errors; 30fps orbit preserved. Author a
-RED test first (e.g. the cloud's geometry/point layout updates to image-derived
-values after a depth pass) proven non-tautological by reverting.
-
-**Dependency note (SATISFIED — 2026-07-03):** `@huggingface/transformers@4.2.0`
-was added to `package.json` + `package-lock.json` with human approval (the
-bootstrap had deliberately left it out). The confirmed output contract above was
-researched against this same v4 line (the `onnx-community/depth-anything-v2-small`
-model card and the v4 `DepthEstimationPipeline` source), so it holds. Both M3
-gates — the human checkpoint and the dependency add — are now **cleared**; M3 is
-fully actionable for autopilot. Autopilot must **not** edit dependencies further —
-that stays on its forbidden-ops list; the one intended addition is done.
-
-**Autopilot note:** checkpoint is cleared, but M3 is the highest-uncertainty
-milestone (model API, WebGPU/WASM, async decoupling). Keep the verify + review
-gate tight; the Z-direction sign check (#2) is mandatory.
+**Autopilot note:** M4 IS the inference↔render decoupling milestone — the
+effort↔pick gate applies (proceed only at known-high session effort). WASM
+inference runs on the main thread on this version; whether a worker is needed to
+hold the 30fps orbit constraint is an open design question for this milestone.
 
 **Test command:** `npm test` (builds, then runs Playwright).
 
@@ -109,16 +101,12 @@ gate tight; the Z-direction sign check (#2) is mandatory.
 ## BLOCKED — do NOT start until the prior milestone has merged
 
 These are here for context only. Each depends on the one before it and must not be
-picked up in the same run. (Milestone 3's human checkpoint has been **cleared** —
-it now lives under NEXT above.)
-
-- **Milestone 4 — Live webcam input.** `getUserMedia` → offscreen canvas; depth
-  inference loop **decoupled** from render (post latest depth map; render consumes
-  newest; drop frames, never queue); reuse the M2 cloud + shader. Blocked on M3.
+picked up in the same run.
 
 - **Milestone 5 — Toggle + polish.** Webcam/Photo toggle with clean webcam
   teardown; FPS + inference-time readout; graceful WebGPU-unavailable message
-  (fall back to WASM, warn it's slower); error states for no-camera-permission,
+  (fall back to WASM, warn it's slower — M3 already console.warns and picks
+  WASM; M5 makes it user-visible); error states for no-camera-permission,
   bad file, model-load failure. Blocked on M4.
 
 ---
