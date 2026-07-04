@@ -502,6 +502,14 @@ test('milestone 4: camera-permission failure shows an error state and recovers',
   await page.goto('/');
   await page.waitForFunction(() => window.__app?.getPointCount() === 128 * 128);
 
+  // The model now loads BEFORE the camera opens — stub it so this test does
+  // not reach for the real (CI-impossible) download on the way to the
+  // permission failure under test.
+  await page.evaluate(() => {
+    window.__app.__setEstimator(() =>
+      Promise.resolve({ depth: { data: new Uint8Array(64), width: 8, height: 8 } }),
+    );
+  });
   await page.click('#webcam-toggle');
 
   await expect(page.locator('#status')).toContainText(/denied|camera|webcam|failed/i);

@@ -366,6 +366,11 @@ async function startWebcam() {
   photoInput.disabled = true;
   const gen = ++webcamGen; // this session's identity
   try {
+    // Model BEFORE camera: the first-run weight download can take minutes and
+    // the toggle is disabled while pending — never hold a hot camera with no
+    // off switch during it.
+    statusEl.textContent = 'Loading depth model… (downloads once, then cached)';
+    const estimator = await getDepthEstimator();
     statusEl.textContent = 'Starting webcam…';
     webcamStream = await navigator.mediaDevices.getUserMedia({ video: true });
     webcamVideo.srcObject = webcamStream;
@@ -375,8 +380,6 @@ async function startWebcam() {
         webcamVideo.addEventListener('loadedmetadata', res, { once: true }),
       );
     }
-    statusEl.textContent = 'Loading depth model… (downloads once, then cached)';
-    const estimator = await getDepthEstimator();
     webcamActive = true;
     webcamBtn.textContent = 'Stop webcam';
     webcamBtn.disabled = false;
