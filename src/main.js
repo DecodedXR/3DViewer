@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { getDepthEstimator, _setEstimatorForTests } from './depth.js';
+import { getDepthEstimator, getSelectedDevice, _setEstimatorForTests } from './depth.js';
+import { initHud } from './hud.js';
 
 // ---------------------------------------------------------------------------
 // Live Depth Field — render/camera scaffold.
@@ -235,6 +236,14 @@ statusEl.id = 'status';
 statusEl.textContent = 'Load a photo to see its depth field.';
 controlPanel.appendChild(statusEl);
 
+// ===========================================================================
+// MILESTONE 5: polish readouts — FPS, per-pass inference time, and a
+// user-visible warning when depth runs on the WASM fallback. All
+// instrumentation lives in hud.js; the render loop and the M4 decoupling
+// machinery below are untouched (the FPS meter runs its own rAF counter).
+// ===========================================================================
+const hud = initHud(controlPanel);
+
 photoInput.addEventListener('change', async () => {
   const file = photoInput.files && photoInput.files[0];
   if (!file) return;
@@ -250,10 +259,11 @@ photoInput.addEventListener('change', async () => {
     }
     statusEl.textContent = 'Loading depth model… (downloads once, then cached)';
     const estimator = await getDepthEstimator();
+    hud.noteDevice(getSelectedDevice());
     statusEl.textContent = 'Estimating depth…';
     const url = URL.createObjectURL(file);
     try {
-      const { depth } = await estimator(url);
+      const { depth } = await hud.timeEstimator(estimator)(url);
       applyDepthToCloud(depth, image);
     } finally {
       URL.revokeObjectURL(url);
@@ -371,6 +381,7 @@ async function startWebcam() {
     // off switch during it.
     statusEl.textContent = 'Loading depth model… (downloads once, then cached)';
     const estimator = await getDepthEstimator();
+    hud.noteDevice(getSelectedDevice());
     statusEl.textContent = 'Starting webcam…';
     webcamStream = await navigator.mediaDevices.getUserMedia({ video: true });
     webcamVideo.srcObject = webcamStream;
@@ -384,7 +395,7 @@ async function startWebcam() {
     webcamBtn.textContent = 'Stop webcam';
     webcamBtn.disabled = false;
     statusEl.textContent = 'Webcam live — newest depth wins; slow frames drop.';
-    webcamLoop(estimator, gen).catch((err) => {
+    webcamLoop(hud.timeEstimator(estimator), gen).catch((err) => {
       // A rejection from a pass that outlived its session is a ghost — the
       // user already stopped (or restarted) — never tear down the live one.
       if (gen !== webcamGen) return;
@@ -465,4 +476,7 @@ window.__app = {
   __getEstimator: getDepthEstimator,
   webcamRunning: () => webcamActive,
   __webcamVideo: webcamVideo,
+  // M5: HUD readouts, so tests can assert the meters against real values.
+  getFps: hud.getFps,
+  getLastInferenceMs: hud.getLastInferenceMs,
 };

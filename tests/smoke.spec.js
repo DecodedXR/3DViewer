@@ -484,6 +484,129 @@ test('milestone 4: restart while a pass is in flight must not resurrect the dead
   expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
+// Milestone 5: polish readouts. A HUD block inside #controls must report the
+// live render frame rate. The property asserted is that the meter WORKS (it
+// reports a positive rate measured from real frames), not any particular
+// number — software-WebGL pacing under parallel workers is not the app's
+// contract.
+test('milestone 5: HUD shows a live FPS readout', async ({ page }) => {
+  // FPS accumulates over ~1s windows and software WebGL frames are slow under
+  // parallel workers — same headroom as the other churn-adjacent tests.
+  test.setTimeout(60_000);
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e}`));
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`);
+  });
+  await page.goto('/');
+  await page.waitForFunction(() => window.__app?.getPointCount() === 128 * 128);
+
+  await expect(page.locator('#hud-fps')).toBeVisible();
+  // The first report lands once a ≥1s frame window has elapsed.
+  await page.waitForFunction(
+    () => typeof window.__app.getFps === 'function' && window.__app.getFps() > 0,
+  );
+  await expect(page.locator('#hud-fps')).toContainText(/\d+(\.\d+)? fps/i);
+  expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+// Milestone 5: the HUD must report how long each depth pass took. A fake
+// estimator with a known ~120ms latency drives the webcam loop; the readout
+// must show a measured duration at least that long (lower bound only — wall
+// clock on a loaded machine can stretch a setTimeout, never shrink it).
+test('milestone 5: HUD reports per-pass inference time from the webcam loop', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e}`));
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`);
+  });
+  await page.goto('/');
+  await page.waitForFunction(() => window.__app?.getPointCount() === 128 * 128);
+
+  await page.evaluate(() => {
+    const W = 8;
+    const H = 8;
+    const data = new Uint8Array(W * H).fill(255);
+    window.__app.__setEstimator(
+      () =>
+        new Promise((res) =>
+          setTimeout(() => res({ depth: { data, width: W, height: H } }), 120),
+        ),
+    );
+  });
+  await page.click('#webcam-toggle');
+
+  await page.waitForFunction(
+    () =>
+      typeof window.__app.getLastInferenceMs === 'function' &&
+      window.__app.getLastInferenceMs() >= 100,
+  );
+  await expect(page.locator('#hud-infer')).toContainText(/\d+ ms/i);
+
+  await page.click('#webcam-toggle');
+  await page.waitForFunction(() => window.__app.webcamRunning() === false);
+  expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+// Milestone 5: the WASM fallback must be USER-visible, not just a
+// console.warn (src/depth.js already picks the device once up front — M5
+// surfaces it). The real device pick can't run meaningfully in CI, so
+// __setEstimator grows an optional device arg to simulate the pick; the
+// warning must show for 'wasm' and stay hidden for 'webgpu'.
+test('milestone 5: WASM fallback shows a visible slower-device warning; WebGPU does not', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e}`));
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`);
+  });
+  await page.goto('/');
+  await page.waitForFunction(() => window.__app?.getPointCount() === 128 * 128);
+
+  // No warning before any model load.
+  await expect(page.locator('#device-note')).toBeHidden();
+
+  await page.evaluate(() => {
+    window.__app.__setEstimator(
+      () =>
+        Promise.resolve({
+          depth: { data: new Uint8Array(64).fill(255), width: 8, height: 8 },
+        }),
+      'wasm',
+    );
+  });
+  await page.click('#webcam-toggle');
+  await page.waitForFunction(() => window.__app.webcamRunning() === true);
+  await expect(page.locator('#device-note')).toBeVisible();
+  await expect(page.locator('#device-note')).toContainText(/slower/i);
+  await page.click('#webcam-toggle');
+  await page.waitForFunction(() => window.__app.webcamRunning() === false);
+
+  // Fresh page, WebGPU pick: the warning must NOT appear.
+  await page.goto('/');
+  await page.waitForFunction(() => window.__app?.getPointCount() === 128 * 128);
+  await page.evaluate(() => {
+    window.__app.__setEstimator(
+      () =>
+        Promise.resolve({
+          depth: { data: new Uint8Array(64).fill(255), width: 8, height: 8 },
+        }),
+      'webgpu',
+    );
+  });
+  await page.click('#webcam-toggle');
+  await page.waitForFunction(() => window.__app.webcamRunning() === true);
+  await expect(page.locator('#device-note')).toBeHidden();
+  await page.click('#webcam-toggle');
+  await page.waitForFunction(() => window.__app.webcamRunning() === false);
+  expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
 // Milestone 4 failure path: camera permission denied (or no camera) must
 // surface a visible error state in #status and leave the UI recoverable — not
 // an uncaught rejection, not a console.error, not a stuck-disabled button.
