@@ -4,8 +4,9 @@ Single source of truth for "what's next." One milestone per PR/run. Autopilot:
 pick the one task under **NEXT**, ship it, stop. Do **not** start anything under
 **BLOCKED**.
 
-_Last updated: 2026-07-03 — Milestone 6 (Web Worker WASM inference) done;
-queue empty pending an M7 proposal._
+_Last updated: 2026-07-04 — Milestone 6 (Web Worker WASM inference) done; a
+user-directed polish item (boot loading bar) landed on top; queue empty pending
+an M7 proposal._
 
 ---
 
@@ -154,6 +155,26 @@ queue empty pending an M7 proposal._
   probe (headless → WASM → worker): a 38.2s pass rendered **558 rAF frames,
   max gap 1.57s** — pre-M6 the gap was the whole pass. Pre-change HEAD
   (rollback) `c61d33b`.
+
+- **Polish — boot loading bar (user-directed, not a milestone).** The app used
+  to show a blank black screen until the ~194KB-gzipped entry bundle (Three.js)
+  downloaded, parsed, and rendered the first frame — no feedback. Added an
+  **inline, instant-paint boot loader**: an overlay + critical CSS live directly
+  in `index.html` (a `<head>` `<style>` + `#boot-loader` markup Vite passes
+  through untouched into the built HTML, ahead of the module `<script>`), so it
+  paints on the FIRST paint, before any JS downloads. The fill advances toward
+  92% on a pure-CSS animation; `src/main.js` snaps it to 100% and fades the
+  overlay out on the **first rendered frame** (a one-shot after the first
+  `renderer.render` in `animate()`, which runs synchronously at module eval —
+  before `window.__app` is set, so the overlay is `pointer-events:none`/removed
+  before any UI interaction). This is a **perceived-load** win (First Contentful
+  Paint: blank → instant) — the JS payload is unchanged (Three.js is required for
+  the first frame; the depth model already lazy-loads, no model bytes at boot).
+  Smoke test asserts the loader ships in the raw server HTML (fetched via
+  `page.request.get('/')`, so a JS-injected node can't satisfy it) AND is gone
+  once the app boots — non-tautological only together (loader-in-HTML but no
+  dismissal was verified RED on the second assertion). Verified visually on a
+  real build (frozen-loader screenshot). Pre-change HEAD (rollback) `789d6ae`.
 
 **Carry-over facts from M3/M4 (do not re-derive):**
 
