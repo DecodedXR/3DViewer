@@ -644,6 +644,47 @@ test('milestone 4: camera-permission failure shows an error state and recovers',
   expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
+// Boot loading bar. A loading indicator must be present in the INITIAL
+// server-delivered HTML — up on the first paint, before the app module (~194KB
+// gzipped of Three.js) has even downloaded, let alone run — and must be
+// dismissed once the app has actually booted (first frame rendered).
+//
+// The two assertions are non-tautological only together: (a) proves the loader
+// ships in the raw HTML (checked via a bare request, NOT the live DOM, so it
+// can't be a JS-injected node), and (b) proves main.js clears it. Add the HTML
+// but forget the dismissal → (a) passes, (b) fails (loader sits over the booted
+// app forever). Add neither → (a) fails. Only both together go green.
+test('boot loader: shipped in the initial HTML before JS, dismissed once the app boots', async ({
+  page,
+}) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e}`));
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console.error: ${m.text()}`);
+  });
+
+  // (a) The loader — an overlay carrying an ARIA progressbar — is in the exact
+  // bytes the server sends, so it renders before any module executes. Fetched
+  // raw (not via the live DOM) so a JS-injected element can't satisfy it.
+  const html = await (await page.request.get('/')).text();
+  expect(html, 'initial HTML must contain a #boot-loader overlay').toMatch(
+    /id=["']boot-loader["']/,
+  );
+  expect(html, 'the boot loader must expose an ARIA progressbar').toMatch(
+    /role=["']progressbar["']/,
+  );
+
+  // (b) Live: once the app has booted (the debug hook only exists after main.js
+  // ran end-to-end), the loader must be gone/hidden — main.js dismisses it.
+  await page.goto('/');
+  await page.waitForFunction(
+    () => !!window.__app && typeof window.__app.getPointCount === 'function',
+  );
+  await expect(page.locator('#boot-loader')).toBeHidden();
+
+  expect(errors, `unexpected page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
 // Milestone 6: WASM inference moves into a Web Worker so the main thread stays
 // responsive during a pass. The worker itself can't run in CI (it loads the
 // real ~100MB model — the worker-path proof is a local real-model probe, like

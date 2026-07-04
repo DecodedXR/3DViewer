@@ -440,6 +440,35 @@ function onResize() {
 }
 window.addEventListener('resize', onResize);
 
+// Boot loading bar: dismiss the inline #boot-loader overlay (see index.html)
+// once the app is actually up. It advances on its own CSS animation from the
+// first paint; here we snap the fill to 100% and fade the overlay out, so the
+// bar completes exactly when the app is ready rather than on a guessed timer.
+// One-shot, fired after the first rendered frame.
+let bootLoaderDismissed = false;
+function dismissBootLoader() {
+  const loader = document.getElementById('boot-loader');
+  if (!loader) return;
+  const fill = loader.querySelector('.boot-fill');
+  if (fill) {
+    // Stop the advance animation so the inline width wins, then let the width
+    // transition carry it from wherever it reached up to a full 100%.
+    fill.style.animation = 'none';
+    fill.style.width = '100%';
+  }
+  loader.classList.add('boot-done'); // opacity → 0, pointer-events off
+  // Remove after the fade so it never lingers over the UI or intercepts clicks.
+  // Only the overlay's OWN opacity transition should trigger removal — a
+  // transitionend from the fill's width tween bubbles up too and would cut the
+  // fade short. The timeout is a fallback for when the fade is a no-op (e.g.
+  // prefers-reduced-motion collapses its duration so transitionend may not fire).
+  const remove = () => loader.remove();
+  loader.addEventListener('transitionend', (e) => {
+    if (e.target === loader && e.propertyName === 'opacity') remove();
+  });
+  setTimeout(remove, 600);
+}
+
 function animate() {
   requestAnimationFrame(animate);
   // M4: consume the newest completed depth frame, if one was posted by the
@@ -452,6 +481,11 @@ function animate() {
   }
   controls.update();
   renderer.render(scene, camera);
+  // First frame is on screen — tear down the boot loader.
+  if (!bootLoaderDismissed) {
+    bootLoaderDismissed = true;
+    dismissBootLoader();
+  }
 }
 animate();
 

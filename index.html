@@ -5,8 +5,81 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Live Depth Field</title>
     <link rel="stylesheet" href="/src/style.css" />
+    <!--
+      Boot loading bar. Inlined here (not in a stylesheet, not built by JS) so it
+      paints on the FIRST paint — the instant the page opens, before the ~194KB
+      app module downloads or runs. src/main.js fades it out on the first
+      rendered frame. The CSS fill advances toward 92% on its own, then main.js
+      snaps it to 100% exactly when the app is actually ready — honest feedback,
+      zero JS to start it.
+    -->
+    <style>
+      #boot-loader {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: #000;
+        transition: opacity 0.35s ease;
+      }
+      #boot-loader.boot-done {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #boot-loader .boot-title {
+        font: 600 13px/1 system-ui, sans-serif;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #8fb7ee;
+      }
+      #boot-loader .boot-track {
+        width: 220px;
+        height: 4px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.12);
+        overflow: hidden;
+      }
+      #boot-loader .boot-fill {
+        width: 0;
+        height: 100%;
+        border-radius: 4px;
+        background: linear-gradient(90deg, #5a8fd6, #8ec7ff);
+        box-shadow: 0 0 12px rgba(142, 199, 255, 0.7);
+        animation: boot-advance 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        transition: width 0.3s ease;
+      }
+      @keyframes boot-advance {
+        from {
+          width: 0;
+        }
+        to {
+          width: 92%;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-loader .boot-fill {
+          animation-duration: 0.01ms;
+        }
+        #boot-loader {
+          transition-duration: 0.01ms;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div
+      id="boot-loader"
+      role="progressbar"
+      aria-label="Loading Live Depth Field"
+      aria-live="polite"
+    >
+      <div class="boot-title">Live Depth Field</div>
+      <div class="boot-track"><div class="boot-fill"></div></div>
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/main.js"></script>
   </body>
