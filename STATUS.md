@@ -4,8 +4,8 @@ Single source of truth for "what's next." One milestone per PR/run. Autopilot:
 pick the one task under **NEXT**, ship it, stop. Do **not** start anything under
 **BLOCKED**.
 
-_Last updated: 2026-07-03 — Milestone 4 (live webcam input) landed. Milestone 5
-(toggle + polish) is the actionable NEXT._
+_Last updated: 2026-07-03 — Milestone 5 (toggle + polish) landed. Nothing is
+queued: propose Milestone 6 candidates with a human before adding one._
 
 ---
 
@@ -106,17 +106,27 @@ _Last updated: 2026-07-03 — Milestone 4 (live webcam input) landed. Milestone 
   `webcamRunning()`, `__webcamVideo`. Proven non-tautological (RED with
   production files reverted, tests kept). Pre-change HEAD (rollback) `33ce681`.
 
----
-
-## NEXT (the one actionable task)
-
-### Milestone 5 — Toggle + polish
-
-**Goal:** Webcam/Photo toggle with clean webcam teardown; FPS + inference-time
-readout; graceful WebGPU-unavailable message (fall back to WASM, warn it's
-slower — `src/depth.js` already console.warns and picks WASM; M5 makes it
-user-visible); error states for no-camera-permission, bad file, model-load
-failure.
+- **Milestone 5 — Toggle + polish.** The toggle/teardown and error states
+  already shipped in M4, so M5 added the user-visible instrumentation. New
+  `src/hud.js`: a `#hud` block in `#controls` with an **FPS readout** (a
+  self-scheduled rAF counter — same cadence as the render loop and stalls
+  with it when WASM inference blocks the thread — so `animate()` and the M4
+  post/consume decoupling machinery stayed byte-identical), a **per-pass
+  inference-time readout** fed by a shared `timeEstimator()` pass-through
+  wrapper applied at both estimator call sites (photo handler + the estimator
+  handed to the webcam loop; `webcamLoop` itself untouched), and an amber
+  `#device-note` — "WebGPU unavailable — depth runs on WASM (slower)." —
+  shown after a successful model load only when the picked device is WASM
+  (the M3 console.warn made user-visible). `src/depth.js` records the picked
+  device (`getSelectedDevice()`); `_setEstimatorForTests(fake, device)` grew
+  an optional device arg so tests can simulate the fallback (the real probe
+  can't run meaningfully in CI). Debug hook grew additive `getFps` /
+  `getLastInferenceMs`. Smoke tests: M5-A live FPS readout (> 0, liveness
+  not a rate); M5-B ~120ms fake estimator on the webcam path → `NN ms`
+  readout ≥ 100ms; M5-C warning visible for 'wasm', hidden for 'webgpu'.
+  Verified visually on a real build (idle + live-WASM screenshots). Proven
+  non-tautological (RED with production `src/` reverted, tests kept).
+  Pre-change HEAD (rollback) `0c7a26d`.
 
 **Carry-over facts from M3/M4 (do not re-derive):**
 
@@ -128,20 +138,21 @@ failure.
 - transformers.js 4.2.0 quirk: a rejected WebGPU session init poisons the
   shared `webInitChain` — `src/depth.js` probes `requestAdapter()` and picks
   the device once; keep that pattern.
-- M4 already ships much of M5's raw material: start/stop button with full
-  teardown, permission/model-failure error states in `#status`, and the
-  WASM-fallback console.warn. M5's job is the user-visible polish (toggle UX,
-  FPS/inference readouts, surfaced device warning), not new inference
-  machinery.
 
-**Test command:** `npm test` (builds, then runs Playwright).
+---
+
+## NEXT (the one actionable task)
+
+(Nothing queued. The known Milestone 6 candidate from M4's findings is
+**moving WASM-path inference to a Web Worker** so slow machines keep 30fps
+orbit during a pass — propose it (or alternatives) with a human before adding
+anything here.)
 
 ---
 
 ## BLOCKED — do NOT start until the prior milestone has merged
 
-(Nothing currently queued behind M5 — propose Milestone 6 candidates with a
-human before adding one.)
+(Nothing queued.)
 
 ---
 
