@@ -35,12 +35,20 @@ export function getSelectedDevice() {
 // the weight download).
 export function getDepthEstimator() {
   if (!estimatorPromise) {
-    estimatorPromise = loadEstimator().catch((err) => {
-      estimatorPromise = null;
+    // Cache resets are guarded by promise identity: only the load that owns
+    // the cache may clear it, so a test-installed fake (or a newer retry)
+    // never gets clobbered by a stale load's failure or worker crash.
+    const p = loadEstimator(() => resetCacheIf(p)).catch((err) => {
+      resetCacheIf(p);
       throw err;
     });
+    estimatorPromise = p;
   }
   return estimatorPromise;
+}
+
+function resetCacheIf(promise) {
+  if (estimatorPromise === promise) estimatorPromise = null;
 }
 
 // Probe WebGPU BEFORE touching transformers.js and pick the device once.
@@ -63,7 +71,7 @@ async function pickDevice() {
   return 'wasm';
 }
 
-async function loadEstimator() {
+async function loadEstimator(resetCache) {
   const device = await pickDevice();
   selectedDevice = device;
   if (device === 'webgpu') {
@@ -76,7 +84,7 @@ async function loadEstimator() {
   // orbit stays live during a pass. Splitting by device also keeps the
   // webInitChain poison quirk structurally impossible: the worker only ever
   // inits WASM, the main thread only ever inits WebGPU.
-  return createWorkerEstimator();
+  return createWorkerEstimator(resetCache);
 }
 
 // Spawn the depth worker and resolve to an estimator with the same call shape
@@ -88,7 +96,7 @@ async function loadEstimator() {
 // height } — exactly the subset of the RawImage contract applyDepthToCloud
 // consumes. hud.timeEstimator wraps the returned function at the call sites,
 // so the M5 readout measures this full round trip.
-function createWorkerEstimator() {
+function createWorkerEstimator(resetCache) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./depth-worker.js', import.meta.url), {
       type: 'module',
@@ -96,17 +104,17 @@ function createWorkerEstimator() {
     const pending = new Map(); // id → { resolve, reject }
     let nextId = 0;
     let dead = null;
-    let loadedPromise = null; // set once resolved, to guard the cache reset
 
     // A worker failure (init or crash) kills this estimator for good: reject
-    // everything in flight, terminate, and clear the module cache so the next
-    // upload spawns a fresh worker (same retry semantics as a failed load).
+    // everything in flight, terminate, and clear the module cache (identity-
+    // guarded by the caller) so the next upload spawns a fresh worker — the
+    // same retry semantics as a failed load.
     const fail = (err) => {
       dead = err;
       worker.terminate();
       for (const p of pending.values()) p.reject(err);
       pending.clear();
-      if (loadedPromise && estimatorPromise === loadedPromise) estimatorPromise = null;
+      resetCache();
       reject(err); // no-op if 'ready' already resolved us
     };
 
@@ -119,7 +127,6 @@ function createWorkerEstimator() {
     worker.addEventListener('message', (e) => {
       const msg = e.data;
       if (msg.type === 'ready') {
-        loadedPromise = estimatorPromise;
         resolve(estimatorFn);
       } else if (msg.type === 'init-error') {
         fail(new Error(msg.error));
