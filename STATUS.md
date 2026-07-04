@@ -4,8 +4,8 @@ Single source of truth for "what's next." One milestone per PR/run. Autopilot:
 pick the one task under **NEXT**, ship it, stop. Do **not** start anything under
 **BLOCKED**.
 
-_Last updated: 2026-07-03 — Milestone 5 (toggle + polish) landed. Nothing is
-queued: propose Milestone 6 candidates with a human before adding one._
+_Last updated: 2026-07-03 — Milestone 6 (Web Worker WASM inference) queued;
+the human approved the M4-findings candidate on 2026-07-03._
 
 ---
 
@@ -143,10 +143,26 @@ queued: propose Milestone 6 candidates with a human before adding one._
 
 ## NEXT (the one actionable task)
 
-(Nothing queued. The known Milestone 6 candidate from M4's findings is
-**moving WASM-path inference to a Web Worker** so slow machines keep 30fps
-orbit during a pass — propose it (or alternatives) with a human before adding
-anything here.)
+- **Milestone 6 — Web Worker WASM inference.** Move depth inference off the
+  main thread into a module Web Worker so machines on the WASM fallback keep
+  the 30fps orbit **during** a pass (today the main thread blocks ~4–11s per
+  WASM pass — M4 finding; WebGPU already computes off-thread and must keep
+  working, worker or not). Human approved this candidate 2026-07-03.
+  Constraints carried from M3–M5:
+  - **Verify before coding, never guess** (CLAUDE.md rule): confirm from the
+    installed transformers.js 4.2.0 source that the pipeline runs in a worker
+    and what input types survive `postMessage` (an `HTMLCanvasElement` does
+    NOT cross the boundary — expect `ImageBitmap`/`ImageData`/raw buffer +
+    `RawImage` on the worker side). If the installed source + a local runtime
+    probe can't settle it, that's a human checkpoint — bail, don't guess.
+  - Keep the probe-once device pick (the `webInitChain` poison quirk lives in
+    the worker now), the drop-never-queue post/consume contract, the M4
+    generation-token teardown semantics, and the M5 inference-time readout
+    (timing must now measure the round trip the user actually experiences).
+  - `window.__app.__setEstimator` and the M4/M5 smoke tests must keep working —
+    the fake-estimator seam should stay on the main thread side of the bridge.
+  - ⚠️ **Effort gate (skill §1–2): this is an inference-decoupling-core task —
+    implement only in a session at known-high effort (`/effort high`).**
 
 ---
 
