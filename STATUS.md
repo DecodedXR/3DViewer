@@ -4,10 +4,8 @@ Single source of truth for "what's next." One milestone per PR/run. Autopilot:
 pick the one task under **NEXT**, ship it, stop. Do **not** start anything under
 **BLOCKED**.
 
-_Last updated: 2026-07-03 — Milestone 3 (photo → depth → cloud) landed.
-Milestone 4 (live webcam input) is the actionable NEXT. Note for autopilot: M4
-is a render/inference-**decoupling** milestone — the effort↔pick gate applies
-(known-high session effort or defer)._
+_Last updated: 2026-07-03 — Milestone 4 (live webcam input) landed. Milestone 5
+(toggle + polish) is the actionable NEXT._
 
 ---
 
@@ -64,35 +62,77 @@ is a render/inference-**decoupling** milestone — the effort↔pick gate applie
   → visible error state, no console errors. Proven non-tautological (RED with
   production files reverted, tests kept). Pre-change HEAD (rollback) `5e01170`.
 
+- **Milestone 4 — Live webcam input.** `#webcam-toggle` button (in `#controls`,
+  reusing `#status`) → `getUserMedia` → hidden `<video>` → a ping-pong pair of
+  capture canvases (longer edge capped at 512px, aspect preserved) fed
+  **directly** to the shared lazy estimator — the canvas input path
+  (`RawImage.read` → `fromCanvas`, a sync `getImageData`) was confirmed from
+  the installed 4.2.0 source (`pipelines/_base.js` + `utils/image.js`) and is
+  documented in `src/depth.js`'s header. Decoupling per the contract, verbatim:
+  a self-paced async inference loop with exactly **one pass in flight** POSTS
+  the latest `{depth, canvas}` (overwriting any unconsumed frame — drop, never
+  queue); the rAF render loop CONSUMES the newest via `applyDepthToCloud` and
+  never awaits anything. Photo and webcam mutually exclude via the existing
+  `disabled` state (one estimator instance, one job at a time). Failure paths
+  (permission denied / no camera / model-load / mid-loop inference error) tear
+  down tracks, restore the idle UI, and surface in `#status` (console.warn,
+  not error). **The loop yields one rAF tick between passes** — found
+  empirically with the real model: the estimator's promise chain settles
+  entirely in microtasks on the WASM path, so a yield-less loop spins
+  post→capture→infer with rAF never firing — the posted depth was overwritten
+  forever (35+ completed passes, zero consumed) and orbit froze. The rAF yield
+  guarantees each posted frame is consumed and paces inference at ≤1 pass per
+  rendered frame (M4-C regression test: an instantly-resolving estimator must
+  not starve the render loop). **Worker design question resolved: no worker in
+  M4.** WebGPU (the primary path) runs compute off the main thread; on WASM
+  the main thread still blocks DURING each pass (measured ~4–11s/pass in the
+  headless probe), rendering one frame between passes — a live slideshow, not
+  30fps orbit. Accepted as the degraded fallback (M5 owns "warn it's slower");
+  if WASM-machine UX matters, migrating inference to a Web Worker is the
+  known fix and the natural M6 candidate. Smoke tests (fake camera via
+  Chromium fake-media-stream flags in `playwright.config.js`; controllable
+  fake estimator via the new `window.__app.__setEstimator` hook): M4-A — rAF
+  keeps ticking during an in-flight pass, no second call queues, the posted
+  ramp is consumed with the M3 sign contract, the loop continues unprompted,
+  stop releases the camera track and drops a stale post-stop result; M4-B —
+  permission denial surfaces in `#status` and the UI recovers; M4-C — the
+  starvation regression above; M4-D — sessions carry a **generation token**
+  (`webcamGen`): a stop→start with a pass still in flight must not let the
+  dead session's result apply, its loop resurrect, or its rejection tear down
+  the live session (verifier finding — a bare boolean re-validated stale
+  passes). Real-model probe (fake camera, WASM):
+  continuous live passes verified end-to-end, canvas input 512×384 →
+  input-sized depth back. Debug hook grew `__setEstimator`, `__getEstimator`,
+  `webcamRunning()`, `__webcamVideo`. Proven non-tautological (RED with
+  production files reverted, tests kept). Pre-change HEAD (rollback) `33ce681`.
+
 ---
 
 ## NEXT (the one actionable task)
 
-### Milestone 4 — Live webcam input
+### Milestone 5 — Toggle + polish
 
-**Goal:** `getUserMedia` → offscreen canvas; a continuous depth-inference loop
-**decoupled** from render (post the latest depth map; render consumes newest;
-**drop frames, never queue** — the render loop never blocks on inference); reuse
-the M2/M3 cloud, splat shader, and `applyDepthToCloud` mapping.
+**Goal:** Webcam/Photo toggle with clean webcam teardown; FPS + inference-time
+readout; graceful WebGPU-unavailable message (fall back to WASM, warn it's
+slower — `src/depth.js` already console.warns and picks WASM; M5 makes it
+user-visible); error states for no-camera-permission, bad file, model-load
+failure.
 
-**Carry-over facts from M3 (do not re-derive):**
+**Carry-over facts from M3/M4 (do not re-derive):**
 
-- The confirmed depth output contract lives in the M3 DONE entry above and in
-  `src/depth.js`'s header comment: `depth` RawImage, Uint8, 1 channel, input
-  W×H, 0–255 min–max normalized, **brighter = nearer** (sign verified
-  empirically 2026-07-03).
-- transformers.js 4.2.0 quirk: a rejected WebGPU session init **poisons the
-  library's shared `webInitChain`** — in-page retry on another device is
-  impossible. `src/depth.js` therefore probes `requestAdapter()` and picks the
-  device once; keep that pattern.
-- The estimator accepts a URL/Blob; for webcam frames an offscreen-canvas blob
-  or RawImage input path will need confirming against the pipeline source
-  before use (**do not guess** — CLAUDE.md rule).
-
-**Autopilot note:** M4 IS the inference↔render decoupling milestone — the
-effort↔pick gate applies (proceed only at known-high session effort). WASM
-inference runs on the main thread on this version; whether a worker is needed to
-hold the 30fps orbit constraint is an open design question for this milestone.
+- Depth output contract: `depth` RawImage, Uint8, 1 channel, input W×H, 0–255
+  min–max normalized, **brighter = nearer** (verified empirically 2026-07-03).
+- Estimator input contract: accepts `RawImage | string | URL | Blob |
+  HTMLCanvasElement | OffscreenCanvas` (confirmed from the installed 4.2.0
+  source 2026-07-03 — see `src/depth.js` header).
+- transformers.js 4.2.0 quirk: a rejected WebGPU session init poisons the
+  shared `webInitChain` — `src/depth.js` probes `requestAdapter()` and picks
+  the device once; keep that pattern.
+- M4 already ships much of M5's raw material: start/stop button with full
+  teardown, permission/model-failure error states in `#status`, and the
+  WASM-fallback console.warn. M5's job is the user-visible polish (toggle UX,
+  FPS/inference readouts, surfaced device warning), not new inference
+  machinery.
 
 **Test command:** `npm test` (builds, then runs Playwright).
 
@@ -100,14 +140,8 @@ hold the 30fps orbit constraint is an open design question for this milestone.
 
 ## BLOCKED — do NOT start until the prior milestone has merged
 
-These are here for context only. Each depends on the one before it and must not be
-picked up in the same run.
-
-- **Milestone 5 — Toggle + polish.** Webcam/Photo toggle with clean webcam
-  teardown; FPS + inference-time readout; graceful WebGPU-unavailable message
-  (fall back to WASM, warn it's slower — M3 already console.warns and picks
-  WASM; M5 makes it user-visible); error states for no-camera-permission,
-  bad file, model-load failure. Blocked on M4.
+(Nothing currently queued behind M5 — propose Milestone 6 candidates with a
+human before adding one.)
 
 ---
 

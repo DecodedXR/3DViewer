@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { getDepthEstimator } from './depth.js';
+import { getDepthEstimator, _setEstimatorForTests } from './depth.js';
 
 // ---------------------------------------------------------------------------
 // Live Depth Field — render/camera scaffold.
@@ -274,6 +274,144 @@ photoInput.addEventListener('change', async () => {
   }
 });
 
+// ===========================================================================
+// MILESTONE 4: live webcam → continuous depth loop, DECOUPLED from render.
+//
+// The inference loop is a self-paced async function with exactly ONE pass in
+// flight: capture the current video frame onto a canvas, await the estimator
+// (the pipeline accepts a canvas directly — contract confirmed in depth.js),
+// then POST the result as `pendingFrame`. Posting overwrites any unconsumed
+// frame — drop, never queue. The rAF render loop CONSUMES the newest posted
+// frame via applyDepthToCloud and never awaits anything, so orbit keeps
+// running while inference is in flight. Frames the camera produces during a
+// pass are simply never captured — dropped by construction.
+//
+// Two capture canvases alternate (ping-pong) so the canvas referenced by a
+// posted-but-unconsumed frame is never being redrawn by the next capture.
+// ===========================================================================
+const MAX_CAPTURE = 512; // cap the longer video edge fed to the model
+
+let webcamActive = false;
+let webcamStream = null;
+let pendingFrame = null; // newest completed { depth, image } — null once consumed
+
+// Session identity. A bare boolean can't distinguish sessions: stop→start
+// flips it back to true and retroactively "re-validates" a pass still in
+// flight from the DEAD session — its result would apply, its loop resurrect
+// (two passes in flight), and its rejection would tear down the live session.
+// Every start and stop bumps the generation; a loop only acts while the
+// generation it captured is still current.
+let webcamGen = 0;
+
+const webcamVideo = document.createElement('video');
+webcamVideo.muted = true;
+webcamVideo.playsInline = true;
+
+const captureCanvases = [document.createElement('canvas'), document.createElement('canvas')];
+let captureIndex = 0;
+
+async function webcamLoop(estimator, gen) {
+  while (gen === webcamGen) {
+    const canvas = captureCanvases[(captureIndex ^= 1)];
+    const vw = webcamVideo.videoWidth;
+    const vh = webcamVideo.videoHeight;
+    const s = Math.min(1, MAX_CAPTURE / Math.max(vw, vh));
+    const cw = Math.max(1, Math.round(vw * s));
+    const ch = Math.max(1, Math.round(vh * s));
+    // Assigning width/height clears a canvas even when the value is unchanged
+    // — only resize on a real dimension change (e.g. the camera rotates).
+    if (canvas.width !== cw) canvas.width = cw;
+    if (canvas.height !== ch) canvas.height = ch;
+    // willReadFrequently: the estimator reads this canvas back with
+    // getImageData every pass (RawImage.fromCanvas). The FIRST getContext call
+    // fixes the attribute, so setting it here covers the library's reads too.
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(webcamVideo, 0, 0, cw, ch);
+    const { depth } = await estimator(canvas);
+    if (gen !== webcamGen) break; // session ended mid-pass: stale — drop it
+    pendingFrame = { depth, image: canvas }; // overwrite = drop, never queue
+    // Yield ONE rendered frame before the next pass. The estimator's promise
+    // chain can settle entirely in microtasks (the WASM path does), and
+    // microtask continuations starve rendering — without this, the loop spins
+    // post→capture→infer with rAF never firing, so the posted depth is
+    // overwritten forever and orbit freezes. One rAF tick guarantees the
+    // posted frame is consumed and paces inference at ≤1 pass per frame.
+    await new Promise((res) => requestAnimationFrame(res));
+  }
+}
+
+function stopWebcam(message) {
+  webcamGen++; // invalidate any in-flight pass from this session
+  webcamActive = false;
+  pendingFrame = null;
+  if (webcamStream) {
+    webcamStream.getTracks().forEach((t) => t.stop());
+    webcamStream = null;
+  }
+  webcamVideo.srcObject = null;
+  webcamBtn.textContent = 'Start webcam';
+  webcamBtn.disabled = false;
+  photoInput.disabled = false;
+  statusEl.textContent = message;
+}
+
+async function startWebcam() {
+  if (photoInput.disabled) {
+    // A photo pass is mid-flight (it owns this flag while running) — the two
+    // inputs share one estimator, so don't interleave jobs.
+    statusEl.textContent = 'Wait for the current photo pass to finish.';
+    return;
+  }
+  webcamBtn.disabled = true; // no double-start while permissions/model resolve
+  photoInput.disabled = true;
+  const gen = ++webcamGen; // this session's identity
+  try {
+    // Model BEFORE camera: the first-run weight download can take minutes and
+    // the toggle is disabled while pending — never hold a hot camera with no
+    // off switch during it.
+    statusEl.textContent = 'Loading depth model… (downloads once, then cached)';
+    const estimator = await getDepthEstimator();
+    statusEl.textContent = 'Starting webcam…';
+    webcamStream = await navigator.mediaDevices.getUserMedia({ video: true });
+    webcamVideo.srcObject = webcamStream;
+    await webcamVideo.play();
+    if (!webcamVideo.videoWidth) {
+      await new Promise((res) =>
+        webcamVideo.addEventListener('loadedmetadata', res, { once: true }),
+      );
+    }
+    webcamActive = true;
+    webcamBtn.textContent = 'Stop webcam';
+    webcamBtn.disabled = false;
+    statusEl.textContent = 'Webcam live — newest depth wins; slow frames drop.';
+    webcamLoop(estimator, gen).catch((err) => {
+      // A rejection from a pass that outlived its session is a ghost — the
+      // user already stopped (or restarted) — never tear down the live one.
+      if (gen !== webcamGen) return;
+      console.warn('[webcam] depth loop failed:', err);
+      stopWebcam(`Webcam depth failed: ${err && err.message ? err.message : err}`);
+    });
+  } catch (err) {
+    // Permission denied, no camera, or model-load failure: an expected,
+    // user-visible state — warn (not error) and restore the idle UI.
+    console.warn('[webcam] start failed:', err);
+    stopWebcam(`Webcam failed: ${err && err.message ? err.message : err}`);
+  }
+}
+
+const webcamRow = document.createElement('div');
+webcamRow.className = 'ctrl-row';
+const webcamBtn = document.createElement('button');
+webcamBtn.id = 'webcam-toggle';
+webcamBtn.type = 'button';
+webcamBtn.textContent = 'Start webcam';
+webcamBtn.addEventListener('click', () => {
+  if (webcamActive) stopWebcam('Webcam stopped.');
+  else startWebcam();
+});
+webcamRow.appendChild(webcamBtn);
+controlPanel.insertBefore(webcamRow, statusEl);
+
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
@@ -285,6 +423,14 @@ window.addEventListener('resize', onResize);
 
 function animate() {
   requestAnimationFrame(animate);
+  // M4: consume the newest completed depth frame, if one was posted by the
+  // webcam inference loop. A plain null-check — render never waits on
+  // inference, and anything older was already overwritten (dropped).
+  if (pendingFrame) {
+    const { depth, image } = pendingFrame;
+    pendingFrame = null;
+    applyDepthToCloud(depth, image);
+  }
   controls.update();
   renderer.render(scene, camera);
 }
@@ -312,4 +458,11 @@ window.__app = {
   // M3: exposed so tests can drive the depth→cloud mapping with synthetic
   // data — the real model (a ~100MB download) can't run in CI.
   applyDepth: applyDepthToCloud,
+  // M4: webcam-loop introspection for the smoke tests — a fake-estimator
+  // injection point (the model still can't run in CI), the live flag, and the
+  // hidden <video> so a test can watch the camera track get released.
+  __setEstimator: _setEstimatorForTests,
+  __getEstimator: getDepthEstimator,
+  webcamRunning: () => webcamActive,
+  __webcamVideo: webcamVideo,
 };
