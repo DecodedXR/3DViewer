@@ -54,3 +54,16 @@ canvas {
   max-width: 210px;
   color: #9fb4d8;
 }
+
+/* Milestone 5: FPS / inference readouts + the WASM slower-device warning. */
+#hud {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  color: #9fb4d8;
+}
+
+#device-note {
+  max-width: 210px;
+  color: #e8c46a;
+}

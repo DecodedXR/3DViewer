@@ -21,6 +21,15 @@ const MODEL = 'onnx-community/depth-anything-v2-small';
 
 let estimatorPromise = null;
 
+// Milestone 5: the device pickDevice() chose, kept so the UI can surface the
+// WASM fallback to the user (M3/M4 only console.warned). null until a load
+// has picked one.
+let selectedDevice = null;
+
+export function getSelectedDevice() {
+  return selectedDevice;
+}
+
 // Returns (and caches) the depth-estimation pipeline. A failed load clears
 // the cache so the next upload can retry (e.g. after a network blip during
 // the weight download).
@@ -57,12 +66,16 @@ async function pickDevice() {
 async function loadEstimator() {
   const { pipeline } = await import('@huggingface/transformers');
   const device = await pickDevice();
+  selectedDevice = device;
   return pipeline('depth-estimation', MODEL, { device });
 }
 
 // Test hook (M4): swap in a fake estimator so the smoke tests can drive the
 // photo/webcam paths without downloading the real model. Never called by app
-// code — only via window.__app.__setEstimator.
-export function _setEstimatorForTests(fake) {
+// code — only via window.__app.__setEstimator. M5: the optional `device` arg
+// simulates the device pick (the real probe can't run meaningfully in CI) so
+// tests can exercise the WASM-fallback warning.
+export function _setEstimatorForTests(fake, device) {
   estimatorPromise = Promise.resolve(fake);
+  selectedDevice = device ?? null;
 }
