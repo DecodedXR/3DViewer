@@ -4,10 +4,9 @@ Single source of truth for "what's next." One milestone per PR/run. Autopilot:
 pick the one task under **NEXT**, ship it, stop. Do **not** start anything under
 **BLOCKED**.
 
-_Last updated: 2026-07-04 — Milestone 6 (Web Worker WASM inference) done; four
-user-directed polish items (boot loading bar, a black+green "coding" aesthetic,
-a persistent title + author credit, then a bottom "Built with Claude Fable 5"
-build credit) landed on top; queue empty pending an M7 proposal._
+_Last updated: 2026-07-08 — Milestone 7 (mobile-responsive UI) done; M8
+model-download progress is NEXT, then M9 STL+PLY export and M10 expanded
+depth range. (Queue rebuilt from user direction earlier the same day.)_
 
 ---
 
@@ -228,6 +227,36 @@ build credit) landed on top; queue empty pending an M7 proposal._
   `#build-credit`). Verified visually on a real build. Pre-change HEAD (rollback)
   `94b4084`.
 
+- **Milestone 7 — Mobile-responsive UI.** Fixes the user's "unusable on
+  iPhone" report (2026-07-08): on a ~390px screen the fixed top-left
+  `#controls` panel (~236px) collided with the centered `#app-title`, and the
+  controls were far below finger size. Pure-CSS fix — one
+  `@media (max-width: 640px)` block in `src/style.css`, **no JS and no markup
+  changes** (`src/main.js`, the render loop, and the decoupling machinery are
+  byte-identical; desktop above the breakpoint is untouched since every new
+  rule lives inside the query). Mobile layout: `#controls` docks to the
+  bottom edge full-width (safe-area padding for the home bar), sliders
+  stretch, buttons + file input meet the 44px tap minimum; `#build-credit`
+  moves up under the top-center title (the panel owns the bottom edge).
+  **Landscape phones** (≤640px wide but only ~320–360px tall — verifier
+  finding, a regression risk the portrait-only design missed) are handled by
+  capping the panel at `calc(100dvh − 88px)` (vh fallback) with internal
+  `overflow-y` scrolling, so it never reaches the top chrome or exceeds the
+  viewport. Test harness: a new **`mobile-chromium` Playwright project**
+  (Chromium, 390×844, DPR 3, `hasTouch`, `isMobile` — no WebKit, CI provisions
+  Chromium only) runs the new `tests/mobile.spec.js`: boot-loader dismissal;
+  pairwise non-intersection of `#controls`/`#app-title`/`#build-credit`;
+  every control fully in-viewport; tap targets ≥ 44px; the landscape
+  cap/scroll contract at 640×360 with a grown status line; and touch orbit —
+  driven via **CDP `Input.dispatchTouchEvent`** (trusted `pointerType:'touch'`
+  pointer events; a synthetic `dispatchEvent` would hit OrbitControls 0.185's
+  unguarded `setPointerCapture` and throw `NotFoundError` — verified from the
+  installed source) asserting the camera quaternion moves. Proven
+  non-tautological twice (portrait overlap RED on the pre-M7 CSS with exactly
+  the reported geometry; landscape RED pre-cap on the verifier's geometry).
+  Verified visually on a real build (mobile + desktop screenshots; desktop
+  byte-identical). Pre-change HEAD (rollback) `58d3b9a`.
+
 **Carry-over facts from M3/M4 (do not re-derive):**
 
 - Depth output contract: `depth` RawImage, Uint8, 1 channel, input W×H, 0–255
@@ -243,14 +272,54 @@ build credit) landed on top; queue empty pending an M7 proposal._
 
 ## NEXT (the one actionable task)
 
-(Nothing queued — propose an M7 candidate with the human before the next
-autopilot run.)
+- **Milestone 8 — Model-download progress.** The first photo upload / webcam
+  start silently downloads the Depth Anything weights (tens of MB) behind a
+  static status line. Show real progress — a percentage or bar in `#status`.
+  transformers.js takes a `progress_callback` option at pipeline construction;
+  **confirm the exact event shape from the installed 4.2.0 source before
+  coding (working rule 1) — do not assume.** Expect per-file events needing
+  aggregation into one number. M6 wrinkle: on the WASM path the pipeline is
+  built inside `src/depth-worker.js`, so progress events must be relayed over
+  the worker bridge via postMessage; on the WebGPU (main-thread) path they're
+  direct — both call sites feed the same UI. Weights are cached after first
+  load, so the bar should appear only while bytes actually move. Smoke: fake
+  progress events → visible advancing %; completion returns `#status` to the
+  normal flow.
 
 ---
 
 ## BLOCKED — do NOT start until the prior milestone has merged
 
-(Nothing queued.)
+- **Milestone 9 — Export: "Save as STL" + "Save as PLY" buttons.** (Format
+  question resolved with the user 2026-07-08: **both**.) One export module,
+  two buttons in `#controls`, fully client-side (build an ArrayBuffer → Blob →
+  anchor download; hand-roll both writers — no new dependencies, both formats
+  are simple). **Binary STL** — for 3D printing: triangulate the current
+  128×128 grid as a heightfield (fixed grid topology, two triangles per cell,
+  ~32.3k tris); STL has no color, that's inherent to the format. **Binary
+  little-endian PLY** — the actual colored point cloud for
+  MeshLab/CloudCompare/Blender: positions plus per-point `aColor` as uchar
+  RGB. Both exporters must bake in the Points object's world scale (M3
+  preserves photo aspect via object scale, so raw attribute positions are not
+  world coords). Export snapshots whatever is currently displayed — works
+  pre-upload too (the green random cloud); no special webcam guard needed,
+  buffers only swap between frames. Smoke: apply a synthetic ramp, click each
+  button, capture the download (Playwright download event), parse the bytes →
+  assert header/counts and a few known vertex values; PLY colors match
+  `aColor`.
+
+- **Milestone 10 — Expanded depth range** (user: "make the potential depth
+  more expansive"). Displacement is hard-coded — `z = d/255 − 0.5`, a total
+  span of 1.0 world unit — so relief always reads shallow. Add a fourth
+  "depth" slider to `#controls` (alongside pointSize/glow/falloff) scaling
+  the span, e.g. ×0.25–×4, default ×1. Cache the last applied
+  `{depth, canvas}` so moving the slider re-applies **live** to the on-screen
+  cloud, not just the next pass; during a webcam session the next consumed
+  frame picks it up anyway — do not touch the M4 drop-never-queue machinery.
+  Sign contract (bright = near) and the default look at ×1 unchanged. Smoke:
+  synthetic ramp at two slider values → z extent scales proportionally;
+  existing M3 sign asserts stay green. (If M9 landed first, exports
+  automatically reflect the scaled Z — no extra work.)
 
 ---
 

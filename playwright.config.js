@@ -32,8 +32,26 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      // The mobile spec runs only under the phone-emulation project below.
+      testIgnore: /mobile\.spec\.js/,
       use: {
         ...devices['Desktop Chrome'],
+        launchOptions: { args: webglArgs },
+      },
+    },
+    // Milestone 7: phone emulation for the mobile-responsive chrome. Chromium
+    // only (CI runners provision Chromium only — do NOT add a WebKit project);
+    // iPhone-class viewport + touch + DPR 3 so the narrow-viewport breakpoint
+    // and coarse-pointer tap targets are exercised for real.
+    {
+      name: 'mobile-chromium',
+      testMatch: /mobile\.spec\.js/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 390, height: 844 },
+        deviceScaleFactor: 3,
+        isMobile: true,
+        hasTouch: true,
         launchOptions: { args: webglArgs },
       },
     },
