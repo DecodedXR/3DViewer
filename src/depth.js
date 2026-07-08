@@ -102,7 +102,23 @@ async function loadEstimator(resetCache) {
   if (device === 'webgpu') {
     // WebGPU already computes off the main thread — keep the direct path.
     const { pipeline } = await import('@huggingface/transformers');
-    return pipeline('depth-estimation', MODEL, { device, progress_callback: emitProgress });
+    // Stop forwarding progress once the load settles: pipeline() loads its
+    // components via Promise.all, so a rejected component (→ 'Depth failed: …'
+    // in #status) doesn't cancel a sibling download, whose surviving progress
+    // events would otherwise overwrite the error forever (verifier finding).
+    // The worker path is immune — fail() terminates the worker.
+    let settled = false;
+    const p = pipeline('depth-estimation', MODEL, {
+      device,
+      progress_callback: (e) => {
+        if (!settled) emitProgress(e);
+      },
+    });
+    p.then(
+      () => (settled = true),
+      () => (settled = true),
+    );
+    return p;
   }
   // Milestone 6: on the WASM fallback the ONNX session blocks whatever thread
   // runs it (~4–11s/pass, M4 finding) — run it in a dedicated module worker so
