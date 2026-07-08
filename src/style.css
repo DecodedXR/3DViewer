@@ -165,3 +165,64 @@ canvas {
   max-width: 210px;
   color: #e8c46a;
 }
+
+/* Milestone 7: mobile-responsive chrome. On a phone-width viewport the desktop
+   layout breaks down — the fixed top-left #controls panel collides with the
+   centered #app-title, and the controls are far below finger size. Below the
+   breakpoint the panel docks to the BOTTOM edge, full width, with 44px-minimum
+   tap targets (Apple HIG / WCAG), and the build credit moves up under the
+   title since the panel now owns the bottom edge. Everything lives inside this
+   media query so the desktop layout above 640px is byte-for-byte unaffected. */
+@media (max-width: 640px) {
+  #controls {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    box-sizing: border-box;
+    border-radius: 10px 10px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    /* Keep the panel's own bottom padding clear of the iPhone home-bar. */
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  /* Finger-sized rows; sliders stretch to use the full panel width. */
+  #controls .ctrl-row {
+    min-height: 44px;
+  }
+
+  #controls input[type='range'] {
+    flex: 1;
+    width: auto;
+  }
+
+  #controls button {
+    min-height: 44px;
+    padding: 10px 16px;
+  }
+
+  #controls input[type='file'] {
+    max-width: none;
+    width: 100%;
+    min-height: 44px;
+  }
+
+  #controls input[type='file']::file-selector-button {
+    padding: 12px 14px;
+  }
+
+  #status,
+  #device-note {
+    max-width: none;
+  }
+
+  /* The bottom edge belongs to the docked panel now — tuck the build credit
+     directly under the top-center title block instead (title bottom lands
+     around y=43; 56px leaves a clear gap). */
+  #build-credit {
+    bottom: auto;
+    top: 56px;
+  }
+}
