@@ -1,5 +1,7 @@
 # Live Depth Field
 
+**Live: [decodedxr.github.io/LiveDepthField](https://decodedxr.github.io/LiveDepthField/)**
+
 Turn a webcam feed or a photo into an explorable 3D point cloud - styled like
 Gaussian splats - entirely in the browser. Vanilla JS + Three.js + Vite, with
 on-device depth (Depth Anything V2 Small via transformers.js) added in later
